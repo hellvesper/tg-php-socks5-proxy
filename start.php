@@ -3,9 +3,17 @@ use \Workerman\Worker;
 use \Workerman\WebServer;
 use \Workerman\Connection\TcpConnection;
 use \Workerman\Connection\AsyncTcpConnection;
+use \Workerman\Connection\UdpConnection;
+use \Workerman\Connection\AsyncUdpConnection;
 
 // 自动加载类
+
+/*
+ * Telegram proxy by @hellvesper
+ * */
+
 require_once __DIR__ . '/vendor/autoload.php';
+require_once 'ip_in_range.php';
 
 define('STAGE_INIT', 0);
 define('STAGE_ADDR', 1);
@@ -24,13 +32,36 @@ define('ADDRTYPE_IPV4', 1);
 define('ADDRTYPE_IPV6', 4);
 define('ADDRTYPE_HOST', 3);
 
+define("RANGES_IPV4", [
+    "149.154.160.0/20", #AS62041
+    "149.154.164.0/22",
+    "91.108.4.0/22",
+    "91.108.56.0/22",
+    "91.108.8.0/22",
+    "149.154.168.0/22", #AS62014
+    "91.108.16.0/22",
+    "91.108.56.0/23",
+    "149.154.172.0/22", #AS59930
+    "91.108.12.0/22",
+    "91.108.20.0/22",   #AS44907
+    "91.108.36.0/23",
+    "91.108.38.0/23",
+    "52.58.230.22/32", # New ?? Amazon
+    "18.184.40.73/32",
 
+]);
+
+Worker::$eventLoopClass = '\Workerman\Events\Ev';
 $worker = new Worker('tcp://0.0.0.0:1080');
+$worker->name = 'tg socks5 proxy';
+
 $worker->onConnect = function($connection)
 {
     $connection->stage = STAGE_INIT;
+    echo "New connection from ip " . $connection->getRemoteIp() . "\n";
+
 };
-$worker->onMessage = function($connection, $buffer)
+$worker->onMessage = function($connection, $buffer) use (&$log)
 {
     switch($connection->stage)
     {
@@ -38,6 +69,9 @@ $worker->onMessage = function($connection, $buffer)
             $connection->send("\x05\x00");
             $connection->stage = STAGE_ADDR;
             return;
+
+//        case STAGE_DNS:
+
         case STAGE_ADDR:
             $cmd = ord($buffer[1]);
             if($cmd != CMD_CONNECT)
@@ -49,6 +83,25 @@ $worker->onMessage = function($connection, $buffer)
             $header_data = parse_socket5_header($buffer);
             if(!$header_data)
             {
+                $connection->close();
+                return;
+            }
+
+            /*
+             * Check is ip4 address in Tg subnet ranges
+             * */
+            if(!$header_data[4]) {
+                /*
+                 * Logging action and closing connection
+                 * */
+                print("ERROR: $header_data[1]:$header_data[2] is NOT in Tg subnet range \n");
+                print("Connection from {$connection->getRemoteAddress()} - Terminated \n");
+
+                $time = strftime('%d-%m-%Y %H:%M:%S') . " [" . time() . "]";
+                $log = "$time - ERROR: $header_data[1]:$header_data[2] is NOT in Tg subnet range \n" .
+                    "Connection from {$connection->getRemoteAddress()} - Terminated \n\n";
+                error_log($log, 3, "tg_proxy.log");
+
                 $connection->close();
                 return;
             }
@@ -82,6 +135,13 @@ function parse_socket5_header($buffer)
             $port_data = unpack('n', substr($buffer, -2));
             $dest_port = $port_data[1];
             $header_length = 10;
+
+            /*
+             * check is ip4 address in Tg subnet ranges
+             * */
+            $in_tg_range_arr = array_map("ipv4_in_range", array_fill(0, count(RANGES_IPV4), $dest_addr), RANGES_IPV4);
+            $is_tg_ip = (in_array(true, $in_tg_range_arr)) ? true : false;
+
             break;
         case ADDRTYPE_HOST:
             $addrlen = ord($buffer[4]);
@@ -96,6 +156,13 @@ function parse_socket5_header($buffer)
             $port_data = unpack('n', substr($buffer, -2));
             $dest_port = $port_data[1];
             $header_length = $addrlen + 7;
+
+            /*
+             * check is ip4 address in Tg subnet ranges
+             * */
+            $in_tg_range_arr = array_map("ipv4_in_range", array_fill(0, count(RANGES_IPV4), $dest_addr), RANGES_IPV4);
+            $is_tg_ip = (in_array(true, $in_tg_range_arr)) ? true : false;
+
             break;
        case ADDRTYPE_IPV6:
             if(strlen($buffer) < 22)
@@ -109,7 +176,7 @@ function parse_socket5_header($buffer)
             echo "unsupported addrtype $addr_type\n";
             return false;
     }
-    return array($addr_type, $dest_addr, $dest_port, $header_length);
+    return array($addr_type, $dest_addr, $dest_port, $header_length, $is_tg_ip);
 }
 
 // 如果不是在根目录启动，则运行runAll方法

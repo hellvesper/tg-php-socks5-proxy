@@ -2,7 +2,7 @@
 Socks5 proxy written in PHP based on [workerman](https://github.com/walkor/Workerman).
 
 ## Install
-1. ```git clone https://github.com/walkor/php-socks5```
+1. ```git clone https://github.com/hellvesper/tg-php-socks5-proxy.git```
 
 2. ```composer install```
 
