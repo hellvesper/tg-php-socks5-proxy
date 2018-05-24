@@ -6,8 +6,6 @@ use \Workerman\Connection\AsyncTcpConnection;
 use \Workerman\Connection\UdpConnection;
 use \Workerman\Connection\AsyncUdpConnection;
 
-// 自动加载类
-
 /*
  * Telegram proxy by @hellvesper
  * */
@@ -179,7 +177,6 @@ function parse_socket5_header($buffer)
     return array($addr_type, $dest_addr, $dest_port, $header_length, $is_tg_ip);
 }
 
-// 如果不是在根目录启动，则运行runAll方法
 if(!defined('GLOBAL_START'))
 {
     Worker::runAll();
